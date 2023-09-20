@@ -1,72 +1,86 @@
-import axios from 'axios';
-import Notiflix from 'notiflix';
-import SimpleLightbox from 'simplelightbox';
-import 'simplelightbox/dist/simple-lightbox.min.css';
+import { fetchImages } from './api.js';
+import {
+  initializeLightbox,
+  showInfoNotification,
+  showSuccessNotification,
+  showFailureNotification,
+} from './ui.js';
 
-const API_KEY = '39495070-5ff071e483d3b47d3211eb1ad';
-const BASE_URL = 'https://pixabay.com/api/';
 const perPage = 40;
 let page = 1;
 let currentQuery = '';
-let isLoading = false; // Флаг, чтобы избежать параллельных запросов
-let isEndOfResults = false; // Флаг, чтобы обозначить конец результатов
+let isLoading = false;
+let isEndOfResults = false;
+let hasContentNotification = false;
+let currentPage = 0;
+let totalPageCount = 0;
 
 const form = document.getElementById('search-form');
 const gallery = document.querySelector('.gallery');
+const lightbox = initializeLightbox();
 
 form.addEventListener('submit', handleFormSubmit);
 
-// Инициализация SimpleLightbox
-const lightbox = new SimpleLightbox('.lightbox');
-
-// Обработчик события прокрутки страницы
 window.addEventListener('scroll', () => {
-  if (isLoading || isEndOfResults) return;
+  if (isLoading || isEndOfResults || currentPage >= totalPageCount) return;
 
   const { scrollTop, clientHeight, scrollHeight } = document.documentElement;
 
   if (scrollTop + clientHeight >= scrollHeight - 1000) {
-    // Если пользователь прокрутил страницу близко к нижней части,
-    // и нет активных запросов и еще есть результаты для загрузки
     loadMoreImages();
   }
 });
 
 async function handleFormSubmit(event) {
   event.preventDefault();
-  gallery.innerHTML = '';
-  page = 1;
-  isEndOfResults = false; // Сбрасываем флаг окончания результатов
   const formData = new FormData(form);
   currentQuery = formData.get('searchQuery');
-  await fetchImages(currentQuery);
+
+  if (currentQuery.trim() === '') {
+    showInfoNotification('Please enter a search query.');
+    return;
+  }
+
+  gallery.innerHTML = '';
+  page = 1;
+  isEndOfResults = false;
+  hasContentNotification = false;
+  currentPage = 0;
+  totalPageCount = 0;
+
+  await fetchAndRenderImages(currentQuery);
 }
 
-async function fetchImages(query) {
+async function fetchAndRenderImages(query) {
   try {
-    isLoading = true; // Устанавливаем флаг загрузки
+    isLoading = true;
 
-    const response = await axios.get(`${BASE_URL}?key=${API_KEY}&q=${query}&image_type=photo&orientation=horizontal&safesearch=true&page=${page}&per_page=${perPage}`);
-
-    const data = response.data;
+    const data = await fetchImages(query, page, perPage);
     const images = data.hits;
 
     if (images.length === 0) {
-      isEndOfResults = true; // Устанавливаем флаг окончания результатов
-      Notiflix.Notify.failure('Sorry, there are no more images matching your search query.');
+      isEndOfResults = true;
+
+      if (!hasContentNotification) {
+        showFailureNotification('Sorry, there are no more images matching your search query.');
+      }
       return;
     }
 
-    const totalHits = data.totalHits;
-    Notiflix.Notify.success(`Hooray! We found ${totalHits} images.`);
+    totalPageCount = Math.ceil(data.totalHits / perPage);
+
+    if (!hasContentNotification) {
+      showSuccessNotification(`Hooray! We found ${data.totalHits} images.`);
+      hasContentNotification = true;
+    }
 
     renderImages(images);
     page++;
+    currentPage++;
   } catch (error) {
-    console.error('Error fetching images:', error);
-    Notiflix.Notify.failure('Oops! Something went wrong.');
+    showFailureNotification('Oops! Something went wrong.');
   } finally {
-    isLoading = false; // Сбрасываем флаг загрузки
+    isLoading = false;
   }
 }
 
@@ -74,7 +88,6 @@ function renderImages(images) {
   const imageCards = images.map(image => createImageCard(image));
   gallery.insertAdjacentHTML('beforeend', imageCards.join(''));
 
-  // Обновляем SimpleLightbox после добавления изображений
   lightbox.refresh();
 }
 
@@ -103,7 +116,7 @@ function createImageCard(image) {
 }
 
 async function loadMoreImages() {
-  if (isLoading || isEndOfResults) return;
+  if (isLoading || isEndOfResults || currentPage >= totalPageCount) return;
 
-  await fetchImages(currentQuery);
+  await fetchAndRenderImages(currentQuery);
 }
